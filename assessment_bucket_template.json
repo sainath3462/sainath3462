@@ -1,0 +1,85 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Assessment Storage Stack",
+    "Parameters": {
+        "environmentCode": {
+            "Description": "Environment Code",
+            "Type": "String",
+            "Default": "dev",
+            "AllowedValues": [
+                "dev",
+                "qas",
+                "loa",
+                "stg",
+                "prd"
+            ]
+        },
+        "projectCode": {
+            "Description": "The Project code",
+            "Default": "assessment",
+            "Type": "String"
+        }
+    },
+    "Mappings": {
+        "environment": {
+            "dev": {
+                "char": "d",
+                "bcp": false
+            },
+            "qas": {
+                "char": "q",
+                "bcp": false
+            },
+            "loa": {
+                "char": "l",
+                "bcp": false
+            },
+            "stg": {
+                "char": "s",
+                "bcp": false
+            },
+            "prd": {
+                "char": "q",
+                "bcp": true
+            }
+        }
+    },
+    "Resources": {
+        "CodeS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "environmentCode"
+                            },
+                            "-",
+                            {
+                                "Ref": "projectCode"
+                            },
+                            "-code-",
+                            {
+                                "Ref": "AWS::Region"
+                            }
+                        ]
+                    ]
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "CodeBucketName": {
+            "Value": {
+                "Ref": "CodeS3Bucket"
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${AWS::StackName}-codebucketname"
+                }
+            }
+        }
+    }
+}

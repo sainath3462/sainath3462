@@ -1,0 +1,534 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Assessment Full Stack",
+    "Parameters": {
+        "environmentCode": {
+            "Description": "Environment Code",
+            "Type": "String",
+            "Default": "dev",
+            "AllowedValues": [
+                "dev",
+                "qas",
+                "loa",
+                "stg",
+                "prd"
+            ]
+        },
+        "projectCode": {
+            "Description": "The Project code",
+            "Default": "assessment",
+            "Type": "String"
+        },
+        "VpcId": {
+            "Description": "VPCId in same account",
+            "Type": "List<AWS::EC2::VPC::Id>"
+        },
+        "SubnetAId": {
+            "Description": "Subnet A ID from same VPC in same account",
+            "Type": "List<AWS::EC2::Subnet::Id>"
+        },
+        "SubnetBId": {
+            "Description": "Subnet B ID from same VPC in same account",
+            "Type": "List<AWS::EC2::Subnet::Id>"
+        },
+        "SecurityGroupId": {
+            "Description": "Security GroupId of which allows 80 traffic as incoming from any source",
+            "Type": "List<AWS::EC2::SecurityGroup::Id>"
+        },
+        "InstanceType": {
+            "Description": "Size of the EC2 instance",
+            "Type": "String",
+            "Default": "t2.micro"
+        },
+        "CodeBucketName": {
+            "Description": "Name of the bucket where code is stored",
+            "Type": "String",
+            "Default": "assessmentcode"
+        },
+        "CodeZipFileName": {
+            "Description": "Name of the zip file in bucket",
+            "Type": "String",
+            "Default": "AwsUploadApp.zip"
+        }
+    },
+    "Mappings": {
+        "environment": {
+            "dev": {
+                "char": "d",
+                "bcp": false
+            },
+            "qas": {
+                "char": "q",
+                "bcp": false
+            },
+            "loa": {
+                "char": "l",
+                "bcp": false
+            },
+            "stg": {
+                "char": "s",
+                "bcp": false
+            },
+            "prd": {
+                "char": "q",
+                "bcp": true
+            }
+        }
+    },
+    "Resources": {
+        "ElasticBeanstalkEC2Role": {
+            "Type": "AWS::IAM::Role",
+            "DependsOn": [],
+            "Properties": {
+                "RoleName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Fn::FindInMap": [
+                                    "environment",
+                                    {
+                                        "Ref": "environmentCode"
+                                    },
+                                    "char"
+                                ]
+                            },
+                            {
+                                "Ref": "projectCode"
+                            },
+                            "-elasticbeanstalk-ec2-role-",
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            ""
+                        ]
+                    ]
+                },
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "ec2.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": []
+            }
+        },
+        "ElasticBeanstalkEC2Policy": {
+            "Type": "AWS::IAM::Policy",
+            "DependsOn": "ElasticBeanstalkEC2Role",
+            "Properties": {
+                "PolicyName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Fn::FindInMap": [
+                                    "environment",
+                                    {
+                                        "Ref": "environmentCode"
+                                    },
+                                    "char"
+                                ]
+                            },
+                            {
+                                "Ref": "projectCode"
+                            },
+                            "-elasticbeanstalk-ec2-policy-",
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            ""
+                        ]
+                    ]
+                },
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "BucketAccess",
+                            "Action": [
+                                "s3:Get*",
+                                "s3:List*",
+                                "s3:PutObject"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": [
+                                "arn:aws:s3:::*",
+                                "arn:aws:s3:::*/*"
+                            ]
+                        },
+                        {
+                            "Sid": "XRayAccess",
+                            "Action": [
+                                "xray:PutTraceSegments",
+                                "xray:PutTelemetryRecords",
+                                "xray:GetSamplingRules",
+                                "xray:GetSamplingTargets",
+                                "xray:GetSamplingStatisticSummaries"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "CloudWatchLogsAccess",
+                            "Action": [
+                                "logs:PutLogEvents",
+                                "logs:CreateLogStream",
+                                "logs:DescribeLogStreams",
+                                "logs:DescribeLogGroups"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": [
+                                "arn:aws:logs:*:*:log-group:/aws/elasticbeanstalk*"
+                            ]
+                        },
+                        {
+                            "Sid": "MetricsAccess",
+                            "Action": [
+                                "cloudwatch:PutMetricData"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": "*"
+                        }
+                    ]
+                },
+                "Roles": [
+                    {
+                        "Ref": "ElasticBeanstalkEC2Role"
+                    }
+                ]
+            }
+        },
+        "ElasticBeanstalkEC2InstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "DependsOn": "ElasticBeanstalkEC2Policy",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "ElasticBeanstalkEC2Role"
+                    }
+                ]
+            }
+        },
+        "EbsApplication": {
+            "Type": "AWS::ElasticBeanstalk::Application",
+            "DependsOn": "ElasticBeanstalkEC2InstanceProfile",
+            "Properties": {
+                "ApplicationName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Fn::FindInMap": [
+                                    "environment",
+                                    {
+                                        "Ref": "environmentCode"
+                                    },
+                                    "char"
+                                ]
+                            },
+                            {
+                                "Ref": "projectCode"
+                            },
+                            ""
+                        ]
+                    ]
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Fn::FindInMap": [
+                                    "environment",
+                                    {
+                                        "Ref": "environmentCode"
+                                    },
+                                    "char"
+                                ]
+                            },
+                            {
+                                "Ref": "projectCode"
+                            },
+                            " Elatic Beanstalk Application"
+                        ]
+                    ]
+                }
+            }
+        },
+        "EbsConfigurationTemplate": {
+            "Type": "AWS::ElasticBeanstalk::ConfigurationTemplate",
+            "Properties": {
+                "ApplicationName": {
+                    "Ref": "EbsApplication"
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Fn::FindInMap": [
+                                    "environment",
+                                    {
+                                        "Ref": "environmentCode"
+                                    },
+                                    "char"
+                                ]
+                            },
+                            {
+                                "Ref": "projectCode"
+                            },
+                            " Elatic Beanstalk Configuration Template"
+                        ]
+                    ]
+                },
+                "OptionSettings": [],
+                "SolutionStackName": "64bit Amazon Linux 2 v2.1.3 running .NET Core"
+            }
+        },
+        "EbsEnvironment": {
+            "Type": "AWS::ElasticBeanstalk::Environment",
+            "DependsOn": "EbsConfigurationTemplate",
+            "Properties": {
+                "ApplicationName": {
+                    "Ref": "EbsApplication"
+                },
+                "Description": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Fn::FindInMap": [
+                                    "environment",
+                                    {
+                                        "Ref": "environmentCode"
+                                    },
+                                    "char"
+                                ]
+                            },
+                            {
+                                "Ref": "projectCode"
+                            },
+                            " Elatic Beanstalk Environment"
+                        ]
+                    ]
+                },
+                "OptionSettings": [
+                    {
+                        "Namespace": "aws:ec2:vpc",
+                        "OptionName": "VPCId",
+                        "Value": {
+                            "Ref": "VpcId"
+                        }
+                    },
+                    {
+                        "Namespace": "aws:ec2:vpc",
+                        "OptionName": "Subnets",
+                        "Value": {
+                            "Ref": "SubnetAId"
+                        }
+                    },
+                    {
+                        "Namespace": "aws:ec2:vpc",
+                        "OptionName": "ELBSubnets",
+                        "Value": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    {
+                                        "Ref": "SubnetAId"
+                                    },
+                                    ",",
+                                    {
+                                        "Ref": "SubnetBId"
+                                    }
+                                ]
+                            ]
+                        }
+                    },
+                    {
+                        "Namespace": "aws:ec2:vpc",
+                        "OptionName": "ELBScheme",
+                        "Value": "external"
+                    },
+                    {
+                        "Namespace": "aws:autoscaling:launchconfiguration",
+                        "OptionName": "SecurityGroups",
+                        "Value": {
+                            "Ref": "SecurityGroupId"
+                        }
+                    },
+                    {
+                        "Namespace": "aws:autoscaling:launchconfiguration",
+                        "OptionName": "IamInstanceProfile",
+                        "Value": {
+                            "Fn::GetAtt": [
+                                "ElasticBeanstalkEC2InstanceProfile",
+                                "Arn"
+                            ]
+                        }
+                    },
+                    {
+                        "Namespace": "aws:autoscaling:launchconfiguration",
+                        "OptionName": "InstanceType",
+                        "Value": {
+                            "Ref": "InstanceType"
+                        }
+                    },
+                    {
+                        "Namespace": "aws:elasticbeanstalk:environment",
+                        "OptionName": "LoadBalancerType",
+                        "Value": "application"
+                    },
+                    {
+                        "Namespace": "aws:elbv2:loadbalancer",
+                        "OptionName": "SecurityGroups",
+                        "Value": {
+                            "Ref": "SecurityGroupId"
+                        }
+                    },
+                    {
+                        "Namespace": "aws:elbv2:loadbalancer",
+                        "OptionName": "ManagedSecurityGroup",
+                        "Value": {
+                            "Ref": "SecurityGroupId"
+                        }
+                    },
+                    {
+                        "Namespace": "aws:elbv2:listener:default",
+                        "OptionName": "ListenerEnabled",
+                        "Value": "true"
+                    },
+                    {
+                        "Namespace": "aws:elasticbeanstalk:application:environment",
+                        "OptionName": "storagebucketname",
+                        "Value": {
+                            "Ref": "StorageS3Bucket"
+                        }
+                    }
+                ],
+                "TemplateName": {
+                    "Ref": "EbsConfigurationTemplate"
+                },
+                "EnvironmentName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "environmentCode"
+                            },
+                            "-",
+                            {
+                                "Ref": "projectCode"
+                            },
+                            "-environment"
+                        ]
+                    ]
+                },
+                "VersionLabel": {
+                    "Ref": "EBSApplicationVersion"
+                }
+            }
+        },
+        "EBSApplicationVersion": {
+            "Type": "AWS::ElasticBeanstalk::ApplicationVersion",
+            "Properties": {
+                "ApplicationName": {
+                    "Ref": "EbsApplication"
+                },
+                "Description": "assessment application code",
+                "SourceBundle": {
+                    "S3Bucket": {
+                        "Ref": "CodeBucketName"
+                    },
+                    "S3Key": {
+                        "Ref": "CodeZipFileName"
+                    }
+                }
+            }
+        },
+        "StorageS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "environmentCode"
+                            },
+                            "-",
+                            {
+                                "Ref": "projectCode"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::Region"
+                            }
+                        ]
+                    ]
+                },
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": false,
+                    "BlockPublicPolicy": false,
+                    "IgnorePublicAcls": false,
+                    "RestrictPublicBuckets": false
+                }
+            }
+        },
+        "StorageBucketPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "Properties": {
+                "Bucket": {
+                    "Ref": "StorageS3Bucket"
+                },
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "s3:GetObject"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": {
+                                "Fn::Join": [
+                                    "",
+                                    [
+                                        "arn:aws:s3:::",
+                                        {
+                                            "Ref": "StorageS3Bucket"
+                                        },
+                                        "/*"
+                                    ]
+                                ]
+                            },
+                            "Principal": {
+                                "AWS": "*"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "EBSId": {
+            "Value": {
+                "Ref": "EbsApplication"
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${AWS::StackName}-EBSId"
+                }
+            }
+        }
+    }
+}
